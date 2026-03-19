@@ -1,0 +1,387 @@
+@startuml Sequence Diagrams - ReliaQuest Employee API
+
+title ReliaQuest Employee API - Sequence Diagrams
+
+skinparam sequenceArrowThickness 2
+skinparam roundcorner 5
+skinparam sequenceParticipant underline
+skinparam backgroundColor #FFFFFF
+
+' =========================================================
+' Diagram 1: Get All Employees
+' =========================================================
+
+newpage Get All Employees
+
+actor Client
+participant "EmployeeControllerImpl\n:8111" as Controller
+participant "LoggingInterceptor" as Logger
+participant "EmployeeService" as Service
+participant "RandomRequestLimitInterceptor" as RateLimit
+participant "MockEmployeeController\n:8112" as MockController
+participant "MockEmployeeService" as MockService
+participant "ModelMapper" as Mapper
+
+Client -> Logger : GET /api/v1/employee
+activate Logger
+Logger -> Controller : preHandle (log request)
+activate Controller
+
+Controller -> Service : getAllEmployees()
+activate Service
+
+Service -> RateLimit : GET /api/v1/employee (via RestTemplate)
+activate RateLimit
+
+alt Rate Limit NOT Exceeded
+  RateLimit -> MockController : forward request
+  activate MockController
+  MockController -> MockService : getMockEmployees()
+  activate MockService
+  MockService --> MockController : List<MockEmployee>
+  deactivate MockService
+  MockController --> RateLimit : Response<List<MockEmployee>> (200 OK)
+  deactivate MockController
+  RateLimit --> Service : Response<List<MockEmployee>> (200 OK)
+else Rate Limit Exceeded
+  RateLimit --> Service : HTTP 429 Too Many Requests
+  Service -> Service : wait (backoff), retry\n(exponential: 10s → 20s → 40s → 80s → 120s max)
+  Service -> RateLimit : retry GET /api/v1/employee
+  RateLimit --> Service : Response<List<MockEmployee>> (200 OK)
+end
+deactivate RateLimit
+
+Service -> Mapper : map(List<MockEmployee>, List<Employee>)
+activate Mapper
+Mapper --> Service : List<Employee>
+deactivate Mapper
+
+Service --> Controller : List<Employee>
+deactivate Service
+
+Controller --> Logger : ResponseEntity<List<Employee>> (200 OK)
+Logger -> Logger : afterCompletion (log response)
+Logger --> Client : 200 OK - List<Employee>
+deactivate Controller
+deactivate Logger
+
+' =========================================================
+' Diagram 2: Get Employee By ID
+' =========================================================
+
+newpage Get Employee By ID
+
+actor Client
+participant "EmployeeControllerImpl\n:8111" as Controller
+participant "EmployeeService" as Service
+participant "MockEmployeeController\n:8112" as MockController
+participant "MockEmployeeService" as MockService
+participant "ModelMapper" as Mapper
+
+Client -> Controller : GET /api/v1/employee/{id}
+activate Controller
+
+Controller -> Service : getEmployeeById(id)
+activate Service
+
+Service -> MockController : GET /api/v1/employee/{id} (RestTemplate)
+activate MockController
+MockController -> MockService : findById(UUID)
+activate MockService
+
+alt Employee Found
+  MockService --> MockController : Optional<MockEmployee> (present)
+  MockController --> Service : Response<MockEmployee> (200 OK)
+  deactivate MockService
+  deactivate MockController
+
+  Service -> Mapper : map(MockEmployee, Employee)
+  activate Mapper
+  Mapper --> Service : Employee
+  deactivate Mapper
+
+  Service --> Controller : Employee
+  Controller --> Client : 200 OK - Employee
+else Employee Not Found
+  MockService --> MockController : Optional.empty()
+  deactivate MockService
+  MockController --> Service : HTTP 404 Not Found
+  deactivate MockController
+
+  Service -> Service : throw EmployeeNotFoundException
+  Service --> Controller : EmployeeNotFoundException
+  Controller --> Controller : EmployeeControllerAdvice handles exception
+  Controller --> Client : 404 Not Found
+end
+
+deactivate Service
+deactivate Controller
+
+' =========================================================
+' Diagram 3: Create Employee
+' =========================================================
+
+newpage Create Employee
+
+actor Client
+participant "EmployeeControllerImpl\n:8111" as Controller
+participant "EmployeeService" as Service
+participant "MockEmployeeController\n:8112" as MockController
+participant "MockEmployeeService" as MockService
+participant "ModelMapper" as Mapper
+
+Client -> Controller : POST /api/v1/employee\n{name, salary, age, title}
+activate Controller
+
+Controller -> Service : createEmployee(CreateEmployee)
+activate Service
+
+Service -> MockController : POST /api/v1/employee\n{name, salary, age, title} (RestTemplate)
+activate MockController
+
+MockController -> MockController : validate input\n(NotBlank, Positive, Min/Max age)
+
+alt Validation Passes
+  MockController -> MockService : create(CreateMockEmployeeInput)
+  activate MockService
+  MockService -> MockService : generate UUID\ngenerate email
+  MockService --> MockController : MockEmployee
+  deactivate MockService
+  MockController --> Service : Response<MockEmployee> (200 OK)
+  deactivate MockController
+
+  Service -> Mapper : map(MockEmployee, Employee)
+  activate Mapper
+  Mapper --> Service : Employee
+  deactivate Mapper
+
+  Service --> Controller : Employee
+  Controller --> Client : 201 CREATED - Employee
+else Validation Fails
+  MockController --> Service : HTTP 400 Bad Request
+  deactivate MockController
+  Service --> Controller : Exception
+  Controller --> Client : 500 Internal Server Error
+end
+
+deactivate Service
+deactivate Controller
+
+' =========================================================
+' Diagram 4: Delete Employee By ID
+' =========================================================
+
+newpage Delete Employee By ID
+
+actor Client
+participant "EmployeeControllerImpl\n:8111" as Controller
+participant "EmployeeService" as Service
+participant "MockEmployeeController\n:8112" as MockController
+participant "MockEmployeeService" as MockService
+
+Client -> Controller : DELETE /api/v1/employee/{id}
+activate Controller
+
+Controller -> Service : deleteEmployeeById(id)
+activate Service
+
+note over Service : Step 1 - Resolve employee name from ID
+Service -> MockController : GET /api/v1/employee/{id} (RestTemplate)
+activate MockController
+MockController -> MockService : findById(UUID)
+activate MockService
+
+alt Employee Found
+  MockService --> MockController : MockEmployee
+  deactivate MockService
+  MockController --> Service : Response<MockEmployee> (200 OK)
+  deactivate MockController
+
+  Service -> Service : extract employee name\ncreate DeleteEmployee{name}
+
+  note over Service : Step 2 - Delete by name
+  Service -> MockController : DELETE /api/v1/employee\n{name} (RestTemplate)
+  activate MockController
+  MockController -> MockService : delete(DeleteMockEmployeeInput)
+  activate MockService
+  MockService -> MockService : find employee by name\nremove from list
+  MockService --> MockController : true
+  deactivate MockService
+  MockController --> Service : Response<Boolean> (200 OK)
+  deactivate MockController
+
+  Service --> Controller : employeeName (String)
+  Controller --> Client : 200 OK - "employeeName"
+else Employee Not Found
+  MockService --> MockController : Optional.empty()
+  deactivate MockService
+  MockController --> Service : HTTP 404 Not Found
+  deactivate MockController
+
+  Service -> Service : throw EmployeeNotFoundException
+  Service --> Controller : EmployeeNotFoundException
+  Controller --> Client : 404 Not Found
+end
+
+deactivate Service
+deactivate Controller
+
+' =========================================================
+' Diagram 5: Retry / Rate Limit Handling
+' =========================================================
+
+newpage Rate Limit Retry Flow
+
+participant "EmployeeService" as Service
+participant "RandomRequestLimitInterceptor\n:8112" as RateLimit
+participant "MockEmployeeController\n:8112" as MockController
+
+Service -> RateLimit : HTTP Request (attempt 1)
+activate RateLimit
+RateLimit -> RateLimit : check request count\nagainst limit
+
+alt Limit NOT exceeded
+  RateLimit -> MockController : forward
+  activate MockController
+  MockController --> RateLimit : 200 OK
+  deactivate MockController
+  RateLimit --> Service : 200 OK
+  deactivate RateLimit
+else Limit Exceeded
+  RateLimit --> Service : 429 Too Many Requests
+  deactivate RateLimit
+
+  Service -> Service : sleep(initialBackoffTime = 10s)
+
+  Service -> RateLimit : HTTP Request (attempt 2)
+  activate RateLimit
+  RateLimit --> Service : 429 Too Many Requests
+  deactivate RateLimit
+
+  Service -> Service : sleep(20s)
+
+  Service -> RateLimit : HTTP Request (attempt 3)
+  activate RateLimit
+  RateLimit --> Service : 429 Too Many Requests
+  deactivate RateLimit
+
+  Service -> Service : sleep(40s)
+
+  ' ... continues with exponential backoff until max
+
+  Service -> RateLimit : HTTP Request (attempt N)
+  activate RateLimit
+  RateLimit -> RateLimit : backoff period ended\nreset counter
+  RateLimit -> MockController : forward
+  activate MockController
+  MockController --> RateLimit : 200 OK
+  deactivate MockController
+  RateLimit --> Service : 200 OK
+  deactivate RateLimit
+end
+
+note right of Service
+  Backoff schedule:
+  Attempt 1: wait 10s
+  Attempt 2: wait 20s
+  Attempt 3: wait 40s
+  Attempt 4: wait 80s
+  Attempt 5+: wait 120s (max)
+
+  If all retries exhausted:
+  → throw RateLimitExceededException
+  → HTTP 429 returned to client
+end note
+
+' =========================================================
+' Diagram 6: Search Employees By Name
+' =========================================================
+
+newpage Search Employees By Name
+
+actor Client
+participant "EmployeeControllerImpl\n:8111" as Controller
+participant "EmployeeService" as Service
+participant "MockEmployeeController\n:8112" as MockController
+
+Client -> Controller : GET /api/v1/employee/search/{searchString}
+activate Controller
+
+Controller -> Service : getEmployeesByNameSearch(searchString)
+activate Service
+
+Service -> MockController : GET /api/v1/employee (RestTemplate)\n(fetch all employees)
+activate MockController
+MockController --> Service : List<MockEmployee> (200 OK)
+deactivate MockController
+
+Service -> Service : map to List<Employee>
+Service -> Service : filter by name.contains(searchString)\n(case-insensitive)
+
+Service --> Controller : List<Employee> (filtered)
+deactivate Service
+
+Controller --> Client : 200 OK - List<Employee>
+deactivate Controller
+
+note over Service
+  Filter uses:
+  employee.getName()
+    .toLowerCase()
+    .contains(searchString.toLowerCase())
+end note
+
+' =========================================================
+' Diagram 7: Get Highest Salary
+' =========================================================
+
+newpage Get Highest Salary and Top 10 Earners
+
+actor Client
+participant "EmployeeControllerImpl\n:8111" as Controller
+participant "EmployeeService" as Service
+participant "MockEmployeeController\n:8112" as MockController
+
+group Get Highest Salary
+  Client -> Controller : GET /api/v1/employee/highestSalary
+  activate Controller
+
+  Controller -> Service : getHighestSalaryOfEmployees()
+  activate Service
+
+  Service -> MockController : GET /api/v1/employee (RestTemplate)
+  activate MockController
+  MockController --> Service : List<MockEmployee>
+  deactivate MockController
+
+  Service -> Service : map to List<Employee>\nsort by salary DESC\nfindFirst()
+
+  Service --> Controller : Optional<Integer> (highest salary)
+  deactivate Service
+
+  Controller --> Client : 200 OK - Integer (salary)
+  deactivate Controller
+end
+
+group Get Top 10 Highest Earners
+  Client -> Controller : GET /api/v1/employee/topTenHighestEarningEmployeeNames
+  activate Controller
+
+  Controller -> Service : getTopTenHighestEarningEmployeeNames()
+  activate Service
+
+  Service -> MockController : GET /api/v1/employee (RestTemplate)
+  activate MockController
+  MockController --> Service : List<MockEmployee>
+  deactivate MockController
+
+  Service -> Service : map to List<Employee>\nsort by salary DESC\nlimit(10)\nmap to names
+
+  Service --> Controller : List<String> (top 10 names)
+  deactivate Service
+
+  Controller --> Client : 200 OK - List<String>
+  deactivate Controller
+end
+
+@enduml

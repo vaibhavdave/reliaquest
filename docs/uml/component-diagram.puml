@@ -1,0 +1,101 @@
+@startuml Component Diagram - ReliaQuest Employee API
+
+title ReliaQuest Employee API - Component & Architecture Diagram
+
+skinparam componentStyle uml2
+skinparam linetype ortho
+skinparam backgroundColor #FAFAFA
+skinparam nodeBackgroundColor #E8F4FD
+skinparam componentBackgroundColor #FFFFFF
+skinparam databaseBackgroundColor #FFF3E0
+skinparam ArrowColor #333333
+
+' =========================================================
+' COMPONENT DIAGRAM
+' =========================================================
+
+actor "API Client\n(Browser / Postman / Service)" as Client
+
+node "Employee API Service\n(Port: 8111)" as ApiService {
+
+  package "Web Layer" {
+    component "LoggingInterceptor" as LogInt <<Interceptor>>
+  }
+
+  package "Controller Layer" {
+    component "EmployeeControllerImpl" as Controller <<REST Controller>>
+    component "EmployeeControllerAdvice" as Advice <<Exception Handler>>
+  }
+
+  package "Service Layer" {
+    component "EmployeeService" as Service <<Service>>
+  }
+
+  package "Configuration" {
+    component "ApiConfiguration" as ApiConfig <<Configuration>>
+    component "OpenApiConfiguration" as OpenApiConfig <<Configuration>>
+  }
+
+  package "Model" {
+    component "Employee" as EmpModel <<DTO>>
+    component "MockEmployee" as MockEmpModel <<DTO>>
+    component "CreateEmployee" as CreateEmpModel <<DTO>>
+    component "DeleteEmployee" as DeleteEmpModel <<DTO>>
+    component "Response<T>" as ResponseModel <<Record>>
+  }
+
+  component "ModelMapper" as Mapper <<Library>>
+  component "RestTemplate" as RestT <<HTTP Client>>
+}
+
+node "Mock Employee Server\n(Port: 8112)" as MockServer {
+
+  package "Web Layer " {
+    component "RandomRequestLimitInterceptor" as RateInt <<Interceptor>>
+  }
+
+  package "Controller Layer " {
+    component "MockEmployeeController" as MockController <<REST Controller>>
+    component "MockEmployeeControllerAdvice" as MockAdvice <<Exception Handler>>
+  }
+
+  package "Service Layer " {
+    component "MockEmployeeService" as MockService <<Service>>
+  }
+
+  package "Configuration " {
+    component "ServerConfiguration" as ServerConfig <<Configuration>>
+  }
+
+  database "In-Memory Employee List\n(50 fake employees)" as InMemory
+}
+
+cloud "OpenAPI / Swagger UI" as SwaggerUI
+
+' =========================================================
+' RELATIONSHIPS
+' =========================================================
+
+Client -right-> LogInt : HTTP Requests
+LogInt -right-> Controller : forward
+Controller -down-> Advice : exception handling
+Controller -right-> Service : business logic
+
+Service -right-> RestT : HTTP calls
+RestT -right-> RateInt : GET/POST/DELETE\n/api/v1/employee
+
+RateInt --> MockController : forward (if limit OK)\nHTTP 429 (if exceeded)
+MockController --> MockAdvice : exception handling
+MockController -down-> MockService : data access
+MockService -down-> InMemory : CRUD
+
+ApiConfig --> RestT : configures
+ApiConfig --> Mapper : configures
+ApiConfig --> LogInt : registers
+ServerConfig --> InMemory : seeds data
+ServerConfig --> RateInt : registers
+
+Service --> Mapper : map MockEmployee → Employee
+OpenApiConfig --> SwaggerUI : serves spec
+
+@enduml

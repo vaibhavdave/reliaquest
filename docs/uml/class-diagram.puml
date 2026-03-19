@@ -1,0 +1,238 @@
+@startuml Class Diagram - ReliaQuest Employee API
+
+title ReliaQuest Employee API - Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam classFontStyle Bold
+skinparam packageStyle rectangle
+skinparam linetype ortho
+
+' =====================
+' API MODULE
+' =====================
+package "com.reliaquest.api" {
+
+  package "controller" {
+    interface IEmployeeController<T, R> {
+      + getAllEmployees() : ResponseEntity<List<T>>
+      + getEmployeesByNameSearch(searchString: String) : ResponseEntity<List<T>>
+      + getEmployeeById(id: String) : ResponseEntity<T>
+      + getHighestSalaryOfEmployees() : ResponseEntity<Integer>
+      + getTopTenHighestEarningEmployeeNames() : ResponseEntity<List<String>>
+      + createEmployee(employeeInput: R) : ResponseEntity<T>
+      + deleteEmployeeById(id: String) : ResponseEntity<String>
+    }
+
+    class EmployeeControllerImpl {
+      - employeeService: EmployeeService
+      + getAllEmployees() : ResponseEntity<List<Employee>>
+      + getEmployeesByNameSearch(searchString: String) : ResponseEntity<List<Employee>>
+      + getEmployeeById(id: String) : ResponseEntity<Employee>
+      + getHighestSalaryOfEmployees() : ResponseEntity<Integer>
+      + getTopTenHighestEarningEmployeeNames() : ResponseEntity<List<String>>
+      + createEmployee(createEmployee: CreateEmployee) : ResponseEntity<Employee>
+      + deleteEmployeeById(id: String) : ResponseEntity<String>
+    }
+
+    class EmployeeControllerAdvice {
+      + handleEmployeeNotFound(ex: EmployeeNotFoundException) : ResponseEntity<Response<Void>>
+      + handleRateLimitExceeded(ex: RateLimitExceededException) : ResponseEntity<Response<Void>>
+      + handleGenericException(ex: Throwable) : ResponseEntity<Response<Void>>
+    }
+  }
+
+  package "service" {
+    class EmployeeService {
+      - restTemplate: RestTemplate
+      - modelMapper: ModelMapper
+      - baseUrl: String
+      - maxBackoffTime: long
+      - initialBackoffTime: long
+      + getAllEmployees() : List<Employee>
+      + getEmployeesByNameSearch(name: String) : List<Employee>
+      + getEmployeeById(id: String) : Employee
+      + getHighestSalaryOfEmployees() : Optional<Integer>
+      + getTopTenHighestEarningEmployeeNames() : List<String>
+      + createEmployee(input: CreateEmployee) : Employee
+      + deleteEmployeeById(id: String) : String
+      - executeWithRetry(action: Supplier<ResponseEntity<T>>) : ResponseEntity<T>
+    }
+  }
+
+  package "model" {
+    class Employee {
+      + id: UUID
+      + name: String
+      + salary: Integer
+      + age: Integer
+      + title: String
+      + email: String
+    }
+
+    class MockEmployee {
+      + id: UUID
+      + employeeName: String
+      + employeeSalary: Integer
+      + employeeAge: Integer
+      + employeeTitle: String
+      + employeeEmail: String
+    }
+
+    class CreateEmployee {
+      + name: String
+      + salary: Integer
+      + age: Integer
+      + title: String
+    }
+
+    class DeleteEmployee {
+      + name: String
+    }
+
+    class Response<T> {
+      + data: T
+      + status: Status
+      + error: String
+      + {static} handled() : Response<Void>
+      + {static} handledWith(data: T) : Response<T>
+      + {static} error(message: String) : Response<Void>
+    }
+
+    enum Status {
+      HANDLED
+      ERROR
+    }
+  }
+
+  package "exception" {
+    class EmployeeNotFoundException {
+      + EmployeeNotFoundException(message: String)
+    }
+
+    class RateLimitExceededException {
+      + RateLimitExceededException(message: String)
+    }
+  }
+
+  package "config" {
+    class ApiConfiguration {
+      + restTemplate() : RestTemplate
+      + modelMapper() : ModelMapper
+    }
+
+    class OpenApiConfiguration {
+      + openApi() : OpenAPI
+    }
+  }
+
+  package "web" {
+    class LoggingInterceptor {
+      + preHandle(request, response, handler) : boolean
+      + afterCompletion(request, response, handler, ex)
+    }
+  }
+}
+
+' =====================
+' SERVER MODULE
+' =====================
+package "com.reliaquest.server" {
+
+  package "controller" as serverController {
+    class MockEmployeeController {
+      - mockEmployeeService: MockEmployeeService
+      + getAllEmployees() : ResponseEntity<Response<List<MockEmployee>>>
+      + getEmployeeById(id: UUID) : ResponseEntity<Response<MockEmployee>>
+      + createEmployee(input: CreateMockEmployeeInput) : ResponseEntity<Response<MockEmployee>>
+      + deleteEmployee(input: DeleteMockEmployeeInput) : ResponseEntity<Response<Boolean>>
+    }
+
+    class MockEmployeeControllerAdvice {
+      + handleGenericException(ex: Exception) : ResponseEntity<Response<Void>>
+    }
+  }
+
+  package "service" as serverService {
+    class MockEmployeeService {
+      - employees: List<MockEmployee>
+      + getMockEmployees() : List<MockEmployee>
+      + findById(id: UUID) : Optional<MockEmployee>
+      + create(input: CreateMockEmployeeInput) : MockEmployee
+      + delete(input: DeleteMockEmployeeInput) : boolean
+    }
+  }
+
+  package "model" as serverModel {
+    class MockEmployee as ServerMockEmployee {
+      + id: UUID
+      + name: String
+      + salary: Integer
+      + age: Integer
+      + title: String
+      + email: String
+    }
+
+    class CreateMockEmployeeInput {
+      + name: String {NotBlank}
+      + salary: Integer {Positive, NotNull}
+      + age: Integer {Min(16), Max(75), NotNull}
+      + title: String {NotBlank}
+    }
+
+    class DeleteMockEmployeeInput {
+      + name: String {NotBlank}
+    }
+  }
+
+  package "web" as serverWeb {
+    class RandomRequestLimitInterceptor {
+      - requestCount: AtomicInteger
+      - limit: int
+      - backoffUntil: Instant
+      + preHandle(request, response, handler) : boolean
+    }
+  }
+
+  package "config" as serverConfig {
+    class ServerConfiguration {
+      + faker() : Faker
+      + mockEmployees(faker, maxEmployees) : List<MockEmployee>
+    }
+  }
+}
+
+' =====================
+' RELATIONSHIPS
+' =====================
+
+' API Controller relationships
+EmployeeControllerImpl ..|> IEmployeeController
+EmployeeControllerImpl --> EmployeeService : uses
+EmployeeControllerAdvice ..> EmployeeNotFoundException : handles
+EmployeeControllerAdvice ..> RateLimitExceededException : handles
+
+' API Service relationships
+EmployeeService --> Employee : creates
+EmployeeService --> MockEmployee : maps from
+EmployeeService --> CreateEmployee : accepts
+EmployeeService --> DeleteEmployee : creates
+EmployeeService ..> EmployeeNotFoundException : throws
+EmployeeService ..> RateLimitExceededException : throws
+
+' API Model relationships
+Response --> Status : uses
+MockEmployee ..> Employee : «maps to»
+
+' API Config relationships
+ApiConfiguration --> LoggingInterceptor : registers
+
+' Server relationships
+MockEmployeeController --> MockEmployeeService : uses
+MockEmployeeService --> ServerMockEmployee : manages
+MockEmployeeService --> CreateMockEmployeeInput : accepts
+MockEmployeeService --> DeleteMockEmployeeInput : accepts
+
+' Cross-module
+EmployeeService ..> MockEmployeeController : «HTTP calls»
+
+@enduml
