@@ -254,7 +254,7 @@ end
 
 Service -> Service : map Employee → DeleteEmployee (name)
 Service -> RT : exchange(DELETE, serverUrl, body{name})
-RT -> Mock : DELETE /api/v1/employee/{name}
+RT -> Mock : DELETE /api/v1/employee
 
 alt Deletion successful
   Mock --> RT : Response<Boolean>(true)
@@ -338,13 +338,15 @@ end note
 :Incoming HTTP Request;
 
 if (requestCount >= REQUEST_LIMIT?) then (yes)
-  if (now < lastRequested + BACKOFF_DURATION?) then (yes - still in backoff window)
+  if (now.minus(BACKOFF_DURATION).isBefore(lastRequested)?) then (yes - still in backoff window)
     :Return 429 Too Many Requests;
     :Block request (return false);
     stop
   else (no - backoff expired)
-    :Reset counter to 0
-    Allow request;
+    if (now.minus(BACKOFF_DURATION).isAfter(lastRequested)?) then (yes)
+      :Reset counter to 0
+      Allow request;
+    endif
   endif
 else (no)
   :Increment request counter
@@ -396,12 +398,12 @@ end
 title Model Mapping Flow (ModelMapper)
 
 class MockEmployee {
-  + UUID id
-  + String employee_name
-  + Integer employee_salary
-  + Integer employee_age
-  + String employee_title
-  + String employee_email
+  + String id
+  + String name
+  + Integer salary
+  + Integer age
+  + String title
+  + String email
 }
 
 class Employee {
